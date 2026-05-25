@@ -1,0 +1,40 @@
+# Swift Package Manager
+.build/
+DerivedData/
+.swiftpm/xcode/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# IDE & Editor
+.claude/
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Xcode
+*.xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
+
+# OS
+.DS_Store
+Thumbs.db
+._*
+
+# Project runtime
+.pylorsmeta.db
+.pylorsthumb/
