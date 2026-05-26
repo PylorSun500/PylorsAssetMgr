@@ -6,11 +6,12 @@ actor TagStore {
 
     init(dbPath: String) throws {
         self.dbQueue = try DatabaseQueue(path: dbPath)
-        try configureDatabase()
+        try configure()
     }
 
-    private nonisolated func configureDatabase() throws {
-        try dbQueue.write { db in
+    private func configure() throws {
+        // PRAGMA 必须在事务外执行
+        try dbQueue.writeWithoutTransaction { db in
             try db.execute(sql: "PRAGMA journal_mode=WAL")
             try db.execute(sql: "PRAGMA foreign_keys=ON")
         }
