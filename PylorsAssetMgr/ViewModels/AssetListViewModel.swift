@@ -137,6 +137,36 @@ final class AssetListViewModel {
         }
     }
 
+    /// 统一入口：注册用户标签键并加入可见列。所有 UI 路径共用此方法，保证数据一致。
+    func registerAndShowUserColumn(_ key: String) {
+        var current = getVisibleColumnKeys()
+        if !current.contains(key) {
+            current.append(key)
+            setVisibleColumns(current)
+        }
+        // 同步更新内存中的 availableColumns，使设置面板能第一时间感知
+        if !availableColumns.contains(where: { $0.key == key }) {
+            availableColumns.append(TagColumnInfo(key: key, source: .user, defaultVisible: true, humanName: key))
+        }
+        Task {
+            try? await workspace.registerKey(key)
+        }
+        postTagsChanged()
+    }
+
+    func removeAvailableColumn(_ key: String) {
+        availableColumns.removeAll { $0.key == key }
+    }
+
+    func renameAvailableColumn(old: String, new: String) {
+        if let idx = availableColumns.firstIndex(where: { $0.key == old }) {
+            availableColumns[idx] = TagColumnInfo(
+                key: new, source: .user,
+                defaultVisible: availableColumns[idx].defaultVisible,
+                humanName: new)
+        }
+    }
+
     private func loadVisibleKeys() async throws -> [String] {
         let config = try await workspace.getConfig("visible_columns", default: "")
         if !config.isEmpty {
@@ -236,7 +266,7 @@ final class AssetListViewModel {
 
     // MARK: - 标签编辑
 
-    func updateTag(asset: Asset, key: String, value: String) {
+    func updateTag(asset: Asset, key: String, value: String) async {
         let path = asset.relPath
         if let idx = allAssets.firstIndex(where: { $0.relPath == path }) {
             allAssets[idx].userTags[key] = value
@@ -244,12 +274,15 @@ final class AssetListViewModel {
         if let idx = filteredAssets.firstIndex(where: { $0.relPath == path }) {
             filteredAssets[idx].userTags[key] = value
         }
-        Task {
-            try? await workspace.setUserTag(relPath: path, key: key, value: value)
+        do {
+            try await workspace.setUserTag(relPath: path, key: key, value: value)
+        } catch {
+            print("updateTag failed: \(error)")
         }
+        postTagsChanged()
     }
 
-    func deleteTag(asset: Asset, key: String) {
+    func deleteTag(asset: Asset, key: String) async {
         let path = asset.relPath
         if let idx = allAssets.firstIndex(where: { $0.relPath == path }) {
             allAssets[idx].userTags.removeValue(forKey: key)
@@ -257,12 +290,15 @@ final class AssetListViewModel {
         if let idx = filteredAssets.firstIndex(where: { $0.relPath == path }) {
             filteredAssets[idx].userTags.removeValue(forKey: key)
         }
-        Task {
-            try? await workspace.deleteUserTag(relPath: path, key: key)
+        do {
+            try await workspace.deleteUserTag(relPath: path, key: key)
+        } catch {
+            print("deleteTag failed: \(error)")
         }
+        postTagsChanged()
     }
 
-    func batchUpdateTags(assets: [Asset], key: String, value: String) {
+    func batchUpdateTags(assets: [Asset], key: String, value: String) async {
         let paths = assets.map(\.relPath)
         for path in paths {
             if let idx = allAssets.firstIndex(where: { $0.relPath == path }) {
@@ -272,9 +308,16 @@ final class AssetListViewModel {
                 filteredAssets[idx].userTags[key] = value
             }
         }
-        Task {
-            try? await workspace.batchSetTags(relPaths: paths, key: key, value: value)
+        do {
+            try await workspace.batchSetTags(relPaths: paths, key: key, value: value)
+        } catch {
+            print("batchUpdateTags failed: \(error)")
         }
+        postTagsChanged()
+    }
+
+    private func postTagsChanged() {
+        NotificationCenter.default.post(name: .tagsDidChange, object: nil)
     }
 
     // MARK: - 帮助方法

@@ -57,6 +57,10 @@ actor Workspace {
 
     // MARK: - 键管理
 
+    func registerKey(_ key: String) async throws {
+        try await tagStore.registerKey(key)
+    }
+
     func deleteKey(_ key: String) async throws {
         try await tagStore.deleteKey(key)
     }

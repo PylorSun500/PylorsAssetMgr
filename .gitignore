@@ -40,3 +40,5 @@ Thumbs.db
 .pylorsthumb/
 
 doc/
+
+*.code-workspace

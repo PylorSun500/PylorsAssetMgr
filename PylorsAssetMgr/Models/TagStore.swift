@@ -159,6 +159,13 @@ actor TagStore {
         }
     }
 
+    func registerKey(_ key: String) throws {
+        try dbQueue.write { db in
+            try db.execute(sql: "INSERT OR IGNORE INTO tag_key_registry (key) VALUES (?)",
+                           arguments: [key])
+        }
+    }
+
     func deleteKey(_ key: String) throws {
         try dbQueue.write { db in
             try db.execute(sql: "DELETE FROM user_tags WHERE key = ?", arguments: [key])

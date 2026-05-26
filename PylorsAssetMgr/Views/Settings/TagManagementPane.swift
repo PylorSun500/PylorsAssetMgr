@@ -15,6 +15,7 @@ struct TagManagementPane: View {
     @State private var selectedKey: String? = nil
     @State private var editingKey: String? = nil
     @State private var editingValues: [String] = []
+    @State private var errorMessage: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -136,6 +137,7 @@ struct TagManagementPane: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onAppear { load() }
         .onChange(of: workspaceVM.activeIndex) { _, _ in load() }
+        .onReceive(NotificationCenter.default.publisher(for: .tagsDidChange)) { _ in load() }
         .sheet(isPresented: Binding(
             get: { editingKey != nil },
             set: { if !$0 { editingKey = nil } }
@@ -156,6 +158,14 @@ struct TagManagementPane: View {
             TextField("新键名", text: $renameText)
             Button("确定") { commitRename() }
             Button("取消", role: .cancel) { renameTarget = nil }
+        }
+        .alert("错误", isPresented: Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )) {
+            Button("确定") { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "")
         }
     }
 
@@ -217,13 +227,17 @@ struct TagManagementPane: View {
 
     private func addKey() {
         let name = newKeyName.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty,
-              (try? Constants.tagKeyPattern.wholeMatch(in: name)) != nil,
-              !tagRows.contains(where: { $0.key == name }),
-              let vm = workspaceVM.activeViewModel else { return }
-        var visible = vm.getVisibleColumnKeys()
-        visible.append(name)
-        vm.setVisibleColumns(visible)
+        guard !name.isEmpty else { return }
+        guard (try? Constants.tagKeyPattern.wholeMatch(in: name)) != nil else {
+            errorMessage = "键名「\(name)」格式无效。必须以字母或中文开头，只含字母、数字、中文、下划线、连字符。"
+            return
+        }
+        guard !tagRows.contains(where: { $0.key == name }) else {
+            errorMessage = "键名「\(name)」已存在。"
+            return
+        }
+        guard let vm = workspaceVM.activeViewModel else { return }
+        vm.registerAndShowUserColumn(name)
         tagRows.append(TagKeyRowData(key: name, isVisible: true, distinctValues: []))
         newKeyName = ""
     }
@@ -231,12 +245,19 @@ struct TagManagementPane: View {
     private func renameKey(old: String, new: String) {
         guard let vm = workspaceVM.activeViewModel else { return }
         Task {
-            try? await vm.workspaceRef.renameKey(old: old, new: new)
-            await MainActor.run {
-                var visible = vm.getVisibleColumnKeys()
-                if let idx = visible.firstIndex(of: old) { visible[idx] = new; vm.setVisibleColumns(visible) }
-                if let idx = tagRows.firstIndex(where: { $0.key == old }) { tagRows[idx].key = new }
-                if selectedKey == old { selectedKey = new }
+            do {
+                try await vm.workspaceRef.renameKey(old: old, new: new)
+                await MainActor.run {
+                    var visible = vm.getVisibleColumnKeys()
+                    if let idx = visible.firstIndex(of: old) { visible[idx] = new; vm.setVisibleColumns(visible) }
+                    vm.renameAvailableColumn(old: old, new: new)
+                    if let idx = tagRows.firstIndex(where: { $0.key == old }) { tagRows[idx].key = new }
+                    if selectedKey == old { selectedKey = new }
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = "重命名失败：\(error.localizedDescription)"
+                }
             }
         }
     }
@@ -246,12 +267,19 @@ struct TagManagementPane: View {
     private func deleteRowByKey(_ key: String) {
         guard let vm = workspaceVM.activeViewModel else { return }
         Task {
-            try? await vm.workspaceRef.deleteKey(key)
-            await MainActor.run {
-                var visible = vm.getVisibleColumnKeys()
-                visible.removeAll { $0 == key }; vm.setVisibleColumns(visible)
-                tagRows.removeAll { $0.key == key }
-                if selectedKey == key { selectedKey = nil }
+            do {
+                try await vm.workspaceRef.deleteKey(key)
+                await MainActor.run {
+                    var visible = vm.getVisibleColumnKeys()
+                    visible.removeAll { $0 == key }; vm.setVisibleColumns(visible)
+                    vm.removeAvailableColumn(key)
+                    tagRows.removeAll { $0.key == key }
+                    if selectedKey == key { selectedKey = nil }
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = "删除标签键「\(key)」失败：\(error.localizedDescription)"
+                }
             }
         }
     }
@@ -267,7 +295,15 @@ struct TagManagementPane: View {
         let newSet = Set(values)
         let removed = oldSet.subtracting(newSet)
         Task {
-            for v in removed { try? await vm.workspaceRef.deleteValue(key: key, value: v) }
+            do {
+                for v in removed {
+                    try await vm.workspaceRef.deleteValue(key: key, value: v)
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = "保存值失败：\(error.localizedDescription)"
+                }
+            }
             await MainActor.run {
                 if let idx = tagRows.firstIndex(where: { $0.key == key }) {
                     tagRows[idx].distinctValues = Array(newSet).sorted()

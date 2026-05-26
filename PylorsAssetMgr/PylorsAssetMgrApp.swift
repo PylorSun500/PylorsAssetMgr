@@ -114,4 +114,5 @@ enum WorkspaceActions {
 extension Notification.Name {
     static let showColumnPicker = Notification.Name("showColumnPicker")
     static let toggleSidebar = Notification.Name("toggleSidebar")
+    static let tagsDidChange = Notification.Name("tagsDidChange")
 }

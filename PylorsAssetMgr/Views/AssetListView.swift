@@ -189,10 +189,10 @@ struct AssetListView: NSViewRepresentable {
             let row = sender.clickedRow
             let col = sender.clickedColumn
             guard row >= 0, col >= 0,
-                  row < assets.count, col < visibleKeys.count,
+                  row < assets.count, col < sender.tableColumns.count,
                   let vm = viewModel else { return }
 
-            let key = visibleKeys[col]
+            let key = sender.tableColumns[col].identifier.rawValue
             let asset = assets[row]
 
             // 系统标签 → 打开文件
@@ -215,13 +215,15 @@ struct AssetListView: NSViewRepresentable {
                     currentValue: current,
                     suggestions: suggestions,
                     onConfirm: { value in
-                        if value.isEmpty {
-                            vm.deleteTag(asset: asset, key: key)
-                        } else {
-                            vm.updateTag(asset: asset, key: key, value: value)
+                        Task { @MainActor in
+                            if value.isEmpty {
+                                await vm.deleteTag(asset: asset, key: key)
+                            } else {
+                                await vm.updateTag(asset: asset, key: key, value: value)
+                            }
+                            sender.reloadData()
+                            popover.close()
                         }
-                        sender.reloadData()
-                        popover.close()
                     },
                     onCancel: { popover.close() }
                 )
@@ -284,11 +286,7 @@ struct AssetListView: NSViewRepresentable {
                 rootView: QuickAddTagView(
                     existingKeys: vm.availableColumns.map(\.key),
                     onAdd: { key in
-                        var current = vm.getVisibleColumnKeys()
-                        if !current.contains(key) {
-                            current.append(key)
-                            vm.setVisibleColumns(current)
-                        }
+                        vm.registerAndShowUserColumn(key)
                         window.endSheet(sheetWindow)
                     },
                     onCancel: {
@@ -316,12 +314,7 @@ struct AssetListView: NSViewRepresentable {
                 rootView: QuickAddTagView(
                     existingKeys: vm.availableColumns.map(\.key),
                     onAdd: { key in
-                        var current = vm.getVisibleColumnKeys()
-                        if !current.contains(key) {
-                            current.append(key)
-                            vm.setVisibleColumns(current)
-                        }
-                        popover.close()
+                        vm.registerAndShowUserColumn(key)
                     },
                     onCancel: { popover.close() }
                 )
@@ -466,9 +459,11 @@ struct AssetListView: NSViewRepresentable {
                 rootView: BatchEditSheet(
                     assetCount: assets.count,
                     onConfirm: { k, value in
-                        vm.batchUpdateTags(assets: assets, key: k, value: value)
-                        self.tableView?.reloadData()
-                        popover.close()
+                        Task { @MainActor in
+                            await vm.batchUpdateTags(assets: assets, key: k, value: value)
+                            self.tableView?.reloadData()
+                            popover.close()
+                        }
                     },
                     onCancel: { popover.close() }
                 )
@@ -487,9 +482,11 @@ struct AssetListView: NSViewRepresentable {
                 rootView: BatchEditSheet(
                     assetCount: selected.count,
                     onConfirm: { key, value in
-                        vm.batchUpdateTags(assets: selected, key: key, value: value)
-                        self.tableView?.reloadData()
-                        popover.close()
+                        Task { @MainActor in
+                            await vm.batchUpdateTags(assets: selected, key: key, value: value)
+                            self.tableView?.reloadData()
+                            popover.close()
+                        }
                     },
                     onCancel: { popover.close() }
                 )
@@ -502,10 +499,12 @@ struct AssetListView: NSViewRepresentable {
                   let key = sender.representedObject as? String else { return }
             let indices = selectedRowIndices()
             let selected = indices.map { assets[$0] }
-            for asset in selected {
-                vm.deleteTag(asset: asset, key: key)
+            Task { @MainActor in
+                for asset in selected {
+                    await vm.deleteTag(asset: asset, key: key)
+                }
+                tableView?.reloadData()
             }
-            tableView?.reloadData()
         }
 
         private func selectedRowIndices() -> IndexSet {
