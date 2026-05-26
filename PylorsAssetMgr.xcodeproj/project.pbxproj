@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		7F62636A2FC531E200A0F30B /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 7F6263692FC531E200A0F30B /* GRDB */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		7F62626D2FC526CF00A0F30B /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -40,11 +44,6 @@
 			path = PylorsAssetMgrTests;
 			sourceTree = "<group>";
 		};
-		7F6262792FC526CF00A0F30B /* PylorsAssetMgrUITests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = PylorsAssetMgrUITests;
-			sourceTree = "<group>";
-		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -52,6 +51,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7F62636A2FC531E200A0F30B /* GRDB in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -77,7 +77,6 @@
 			children = (
 				7F6262612FC526CE00A0F30B /* PylorsAssetMgr */,
 				7F62626F2FC526CF00A0F30B /* PylorsAssetMgrTests */,
-				7F6262792FC526CF00A0F30B /* PylorsAssetMgrUITests */,
 				7F6262602FC526CE00A0F30B /* Products */,
 			);
 			sourceTree = "<group>";
@@ -112,6 +111,7 @@
 			);
 			name = PylorsAssetMgr;
 			packageProductDependencies = (
+				7F6263692FC531E200A0F30B /* GRDB */,
 			);
 			productName = PylorsAssetMgr;
 			productReference = 7F62625F2FC526CE00A0F30B /* PylorsAssetMgr.app */;
@@ -153,9 +153,6 @@
 			dependencies = (
 				7F6262782FC526CF00A0F30B /* PBXTargetDependency */,
 			);
-			fileSystemSynchronizedGroups = (
-				7F6262792FC526CF00A0F30B /* PylorsAssetMgrUITests */,
-			);
 			name = PylorsAssetMgrUITests;
 			packageProductDependencies = (
 			);
@@ -195,6 +192,9 @@
 			);
 			mainGroup = 7F6262562FC526CE00A0F30B;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				7F6263682FC531E200A0F30B /* XCRemoteSwiftPackageReference "GRDB" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 7F6262602FC526CE00A0F30B /* Products */;
 			projectDirPath = "";
@@ -563,6 +563,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		7F6263682FC531E200A0F30B /* XCRemoteSwiftPackageReference "GRDB" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/groue/GRDB.swift";
+			requirement = {
+				kind = exactVersion;
+				version = 7.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		7F6263692FC531E200A0F30B /* GRDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7F6263682FC531E200A0F30B /* XCRemoteSwiftPackageReference "GRDB" */;
+			productName = GRDB;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 7F6262572FC526CE00A0F30B /* Project object */;
 }
