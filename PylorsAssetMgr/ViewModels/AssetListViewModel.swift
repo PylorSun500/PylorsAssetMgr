@@ -61,8 +61,10 @@ final class AssetListViewModel {
         }
         allAssets = merged
 
-        // 4. 清理过期标签
-        try? await workspace.cleanupStaleTags(validPaths: Set(paths))
+        // 4. 清理过期标签（仅在完整扫描时清理，子目录刷新会误删其他目录的标签）
+        if subdir == nil {
+            try? await workspace.cleanupStaleTags(validPaths: Set(paths))
+        }
 
         // 5. 排序
         sort()
