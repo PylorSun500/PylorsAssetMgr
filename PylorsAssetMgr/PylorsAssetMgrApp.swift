@@ -69,6 +69,14 @@ struct PylorsAssetMgrApp: App {
                 }
                 .keyboardShortcut("b", modifiers: .command)
             }
+
+            // 设置
+            CommandGroup(replacing: .appSettings) {
+                Button("设置...") {
+                    SettingsWindowManager.shared.show(workspaceVM: workspaceVM)
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
         }
     }
 }

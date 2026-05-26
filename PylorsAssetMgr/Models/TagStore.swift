@@ -9,7 +9,7 @@ actor TagStore {
         try configure()
     }
 
-    private func configure() throws {
+    private nonisolated func configure() throws {
         // PRAGMA 必须在事务外执行
         try dbQueue.writeWithoutTransaction { db in
             try db.execute(sql: "PRAGMA journal_mode=WAL")
@@ -156,6 +156,42 @@ actor TagStore {
         try dbQueue.read { db in
             try String.fetchAll(db,
                 sql: "SELECT key FROM tag_key_registry ORDER BY created_at")
+        }
+    }
+
+    func deleteKey(_ key: String) throws {
+        try dbQueue.write { db in
+            try db.execute(sql: "DELETE FROM user_tags WHERE key = ?", arguments: [key])
+            try db.execute(sql: "DELETE FROM tag_key_registry WHERE key = ?", arguments: [key])
+        }
+    }
+
+    func renameKey(old: String, new: String) throws {
+        try dbQueue.write { db in
+            try db.execute(sql: "UPDATE user_tags SET key = ? WHERE key = ?", arguments: [new, old])
+            try db.execute(sql: "UPDATE tag_key_registry SET key = ? WHERE key = ?", arguments: [new, old])
+        }
+    }
+
+    func getDistinctValues(for key: String) throws -> [String] {
+        try dbQueue.read { db in
+            try String.fetchAll(db,
+                sql: "SELECT DISTINCT value FROM user_tags WHERE key = ? ORDER BY value",
+                arguments: [key])
+        }
+    }
+
+    func deleteValue(key: String, value: String) throws {
+        try dbQueue.write { db in
+            try db.execute(sql: "DELETE FROM user_tags WHERE key = ? AND value = ?",
+                           arguments: [key, value])
+        }
+    }
+
+    func renameValue(key: String, old: String, new: String) throws {
+        try dbQueue.write { db in
+            try db.execute(sql: "UPDATE user_tags SET value = ? WHERE key = ? AND value = ?",
+                           arguments: [new, key, old])
         }
     }
 

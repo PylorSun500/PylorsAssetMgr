@@ -1,10 +1,108 @@
 import SwiftUI
 import AppKit
 
+// MARK: - DirTreeNodeType
+
+enum DirTreeNodeType {
+    case directory
+    case file
+    case hint(fileCount: Int)
+}
+
+// MARK: - DirTreeNode
+
+final class DirTreeNode: NSObject {
+    let name: String
+    let url: URL
+    let nodeType: DirTreeNodeType
+    var children: [DirTreeNode]?
+    var childrenLoaded = false
+
+    init(name: String, url: URL, nodeType: DirTreeNodeType) {
+        self.name = name
+        self.url = url
+        self.nodeType = nodeType
+    }
+
+    var isDirectory: Bool {
+        if case .directory = nodeType { return true }
+        return false
+    }
+
+    var isHint: Bool {
+        if case .hint = nodeType { return true }
+        return false
+    }
+
+    var isLeaf: Bool { !isDirectory }
+
+    func loadChildren(mode: DirectoryTreeMode) {
+        guard isDirectory, !childrenLoaded else { return }
+        childrenLoaded = true
+
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(
+            at: url,
+            includingPropertiesForKeys: [.isDirectoryKey, .isHiddenKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            children = []
+            return
+        }
+
+        let filtered = contents.filter {
+            let n = $0.lastPathComponent
+            guard !n.hasPrefix("."),
+                  n != Constants.thumbCacheDir,
+                  !Constants.skipNames.contains(n) else { return false }
+            return true
+        }
+
+        let dirs = filtered.filter {
+            (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+        }
+        .sorted {
+            $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
+        }
+
+        let files = filtered.filter {
+            (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) != true
+        }
+        .sorted {
+            $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
+        }
+
+        var result: [DirTreeNode] = []
+
+        result += dirs.map {
+            DirTreeNode(name: $0.lastPathComponent, url: $0, nodeType: .directory)
+        }
+
+        switch mode {
+        case .fullFileTree:
+            result += files.map {
+                DirTreeNode(name: $0.lastPathComponent, url: $0, nodeType: .file)
+            }
+
+        case .directoriesWithHint:
+            if !files.isEmpty {
+                result.append(DirTreeNode(
+                    name: "",
+                    url: url,
+                    nodeType: .hint(fileCount: files.count)
+                ))
+            }
+        }
+
+        children = result
+    }
+}
+
 // MARK: - DirTreeView (NSViewRepresentable)
 
 struct DirTreeView: NSViewRepresentable {
     @Environment(WorkspaceViewModel.self) private var workspaceVM
+    @State private var lastMode: DirectoryTreeMode = AppSettings.shared.directoryTreeMode
 
     func makeCoordinator() -> Coordinator {
         Coordinator(workspaceVM: workspaceVM)
@@ -41,55 +139,15 @@ struct DirTreeView: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         context.coordinator.workspaceVM = workspaceVM
-        context.coordinator.checkAndReload()
-    }
-}
 
-// MARK: - DirTreeNode
-
-final class DirTreeNode: NSObject {
-    let name: String
-    let url: URL
-    let isDirectory: Bool
-    var children: [DirTreeNode]?
-    var childrenLoaded = false
-
-    init(name: String, url: URL, isDirectory: Bool) {
-        self.name = name
-        self.url = url
-        self.isDirectory = isDirectory
-    }
-
-    var isLeaf: Bool { !isDirectory }
-
-    func loadChildren() {
-        guard isDirectory, !childrenLoaded else { return }
-        childrenLoaded = true
-
-        let fm = FileManager.default
-        guard let contents = try? fm.contentsOfDirectory(
-            at: url,
-            includingPropertiesForKeys: [.isDirectoryKey, .isHiddenKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            children = []
+        let newMode = AppSettings.shared.directoryTreeMode
+        if newMode != lastMode {
+            lastMode = newMode
+            context.coordinator.reloadWithMode()
             return
         }
 
-        let dirs = contents.filter {
-            (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
-        }
-        .filter {
-            let n = $0.lastPathComponent
-            return !n.hasPrefix(".") && n != Constants.thumbCacheDir
-        }
-        .sorted {
-            $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
-        }
-
-        children = dirs.map {
-            DirTreeNode(name: $0.lastPathComponent, url: $0, isDirectory: true)
-        }
+        context.coordinator.checkAndReload()
     }
 }
 
@@ -103,6 +161,10 @@ extension DirTreeView {
         weak var outlineView: NSOutlineView?
         var rootNodes: [DirTreeNode] = []
         private var currentRootPath: String?
+
+        private var treeMode: DirectoryTreeMode {
+            AppSettings.shared.directoryTreeMode
+        }
 
         init(workspaceVM: WorkspaceViewModel) {
             self.workspaceVM = workspaceVM
@@ -122,11 +184,22 @@ extension DirTreeView {
                 return
             }
             let rootURL = URL(fileURLWithPath: vm.workspacePath)
-            let node = DirTreeNode(name: rootURL.lastPathComponent, url: rootURL, isDirectory: true)
-            node.loadChildren()
+            let node = DirTreeNode(name: rootURL.lastPathComponent, url: rootURL, nodeType: .directory)
+            node.loadChildren(mode: treeMode)
             rootNodes = [node]
             outlineView?.reloadData()
             outlineView?.expandItem(node)
+        }
+
+        func reloadWithMode() {
+            guard currentRootPath != nil else { return }
+            func resetNode(_ node: DirTreeNode) {
+                node.childrenLoaded = false
+                node.children = nil
+                node.children?.forEach { resetNode($0) }
+            }
+            rootNodes.forEach { resetNode($0) }
+            loadRoot()
         }
 
         // MARK: - NSOutlineViewDataSource
@@ -134,7 +207,7 @@ extension DirTreeView {
         func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
             if item == nil { return rootNodes.count }
             guard let node = item as? DirTreeNode else { return 0 }
-            if !node.childrenLoaded { node.loadChildren() }
+            if !node.childrenLoaded { node.loadChildren(mode: treeMode) }
             return node.children?.count ?? 0
         }
 
@@ -147,6 +220,11 @@ extension DirTreeView {
         func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
             guard let node = item as? DirTreeNode else { return false }
             return !node.isLeaf
+        }
+
+        func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool {
+            guard let node = item as? DirTreeNode else { return false }
+            return !node.isHint
         }
 
         // MARK: - NSOutlineViewDelegate
@@ -185,17 +263,35 @@ extension DirTreeView {
                 ])
             }
 
-            cell.textField?.stringValue = node.name
+            switch node.nodeType {
+            case .directory:
+                cell.textField?.stringValue = node.name
+                cell.textField?.font = .systemFont(ofSize: 12)
+                cell.textField?.textColor = .labelColor
+                let expanded = outlineView.isItemExpanded(item)
+                cell.imageView?.image = NSImage(
+                    systemSymbolName: expanded ? "folder.fill" : "folder",
+                    accessibilityDescription: nil)
+                cell.imageView?.contentTintColor = .secondaryLabelColor
+                cell.imageView?.isHidden = false
 
-            let expanded = outlineView.isItemExpanded(item)
-            let iconName = node.isDirectory
-                ? (expanded ? "folder.fill" : "folder")
-                : "doc"
-            cell.imageView?.image = NSImage(
-                systemSymbolName: iconName,
-                accessibilityDescription: nil
-            )
-            cell.imageView?.contentTintColor = .secondaryLabelColor
+            case .file:
+                cell.textField?.stringValue = node.name
+                cell.textField?.font = .systemFont(ofSize: 12)
+                cell.textField?.textColor = .labelColor
+                cell.imageView?.image = NSImage(
+                    systemSymbolName: "doc",
+                    accessibilityDescription: nil)
+                cell.imageView?.contentTintColor = .secondaryLabelColor
+                cell.imageView?.isHidden = false
+
+            case .hint(let fileCount):
+                cell.textField?.stringValue = "…以及 \(fileCount) 个文件…"
+                cell.textField?.font = .systemFont(ofSize: 11)
+                cell.textField?.textColor = .secondaryLabelColor
+                cell.imageView?.image = nil
+                cell.imageView?.isHidden = true
+            }
 
             return cell
         }
@@ -218,8 +314,18 @@ extension DirTreeView {
             guard let outlineView = outlineView,
                   outlineView.selectedRow >= 0,
                   let node = outlineView.item(atRow: outlineView.selectedRow) as? DirTreeNode else { return }
-            Task {
-                await workspaceVM.activeViewModel?.refresh(subdir: node.url)
+
+            switch node.nodeType {
+            case .directory:
+                Task {
+                    await workspaceVM.activeViewModel?.refresh(subdir: node.url)
+                }
+            case .file:
+                Task {
+                    await workspaceVM.activeViewModel?.refresh(subdir: node.url.deletingLastPathComponent())
+                }
+            case .hint:
+                break
             }
         }
 
@@ -228,7 +334,8 @@ extension DirTreeView {
         func buildContextMenu() -> NSMenu? {
             guard let outlineView = outlineView,
                   outlineView.clickedRow >= 0,
-                  let _ = outlineView.item(atRow: outlineView.clickedRow) as? DirTreeNode else { return nil }
+                  let node = outlineView.item(atRow: outlineView.clickedRow) as? DirTreeNode,
+                  !node.isHint else { return nil }
 
             let menu = NSMenu()
 
@@ -285,7 +392,6 @@ private final class DirTableRowView: NSTableRowView {
         let row = outlineView.row(at: point)
         guard row >= 0 else { return nil }
 
-        // 右键时先选中该行
         if outlineView.selectedRow != row {
             outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         }

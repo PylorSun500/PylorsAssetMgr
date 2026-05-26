@@ -54,4 +54,22 @@ actor Workspace {
     func setConfig(_ key: String, value: String) async throws {
         try await tagStore.setConfig(key, value: value)
     }
+
+    // MARK: - 键管理
+
+    func deleteKey(_ key: String) async throws {
+        try await tagStore.deleteKey(key)
+    }
+
+    func renameKey(old: String, new: String) async throws {
+        try await tagStore.renameKey(old: old, new: new)
+    }
+
+    func getDistinctValues(for key: String) async throws -> [String] {
+        try await tagStore.getDistinctValues(for: key)
+    }
+
+    func deleteValue(key: String, value: String) async throws {
+        try await tagStore.deleteValue(key: key, value: value)
+    }
 }

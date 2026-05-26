@@ -296,4 +296,9 @@ final class AssetListViewModel {
     var workspacePath: String {
         workspace.root.path
     }
+
+    /// 暴露 Workspace actor 引用，供设置面板等使用
+    var workspaceRef: Workspace {
+        workspace
+    }
 }
