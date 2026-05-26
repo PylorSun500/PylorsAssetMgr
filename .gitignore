@@ -38,3 +38,7 @@ Thumbs.db
 # Project runtime
 .pylorsmeta.db
 .pylorsthumb/
+
+doc/
+
+*.code-workspace
