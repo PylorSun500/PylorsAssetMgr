@@ -40,6 +40,18 @@ enum Constants {
         try! Regex("^[a-zA-Z\\u4e00-\\u9fff][a-zA-Z0-9\\u4e00-\\u9fff_-]*$")
     }
 
+    // 常用标签快速添加
+    static let commonTagQuickAdd = ["importance", "rating", "category", "author", "project"]
+
+    // 标签预设值快捷项 (key, value, label)
+    static let tagQuickValues: [(String, String, String)] = [
+        ("importance", "high", "🔴 high"),
+        ("importance", "medium", "🟡 medium"),
+        ("importance", "low", "🟢 low"),
+        ("status", "待审核", "待审核"),
+        ("status", "已通过", "已通过"),
+    ]
+
     // 支持的图片扩展名
     static let supportedImageExtensions: Set<String> = [
         ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif",

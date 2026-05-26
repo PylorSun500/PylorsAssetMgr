@@ -1,7 +1,24 @@
 import SwiftUI
+import AppKit
+
+// MARK: - AppDelegate
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // 启动时将 app 带到前台
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        true
+    }
+}
+
+// MARK: - App
 
 @main
 struct PylorsAssetMgrApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @State private var workspaceVM = WorkspaceViewModel()
 
     var body: some Scene {
@@ -11,28 +28,26 @@ struct PylorsAssetMgrApp: App {
                 .frame(minWidth: 800, minHeight: 400)
         }
         .defaultSize(width: 1200, height: 700)
-        .windowStyle(.titleBar)
         .windowResizability(.contentMinSize)
         .commands {
-            // 移除 New 菜单
             CommandGroup(replacing: .newItem) {}
 
             // 文件菜单
             CommandMenu("文件") {
                 Button("打开工作区...") {
-                    openWorkspaceDialog()
+                    WorkspaceActions.openDialog(workspaceVM: workspaceVM)
                 }
                 .keyboardShortcut("o", modifiers: .command)
 
                 Button("关闭工作区") {
-                    Task { await closeActiveWorkspace() }
+                    Task { await WorkspaceActions.closeActive(workspaceVM: workspaceVM) }
                 }
                 .keyboardShortcut("w", modifiers: .command)
 
                 Divider()
 
                 Button("刷新") {
-                    Task { await refreshActiveWorkspace() }
+                    Task { await WorkspaceActions.refresh(workspaceVM: workspaceVM) }
                 }
                 .keyboardShortcut("r", modifiers: .command)
 
@@ -47,25 +62,22 @@ struct PylorsAssetMgrApp: App {
             // 视图菜单
             CommandMenu("视图") {
                 Button("选择可见列...") {
-                    // 通过通知触发
                     NotificationCenter.default.post(name: .showColumnPicker, object: nil)
                 }
                 Button("切换侧边栏") {
                     NotificationCenter.default.post(name: .toggleSidebar, object: nil)
                 }
                 .keyboardShortcut("b", modifiers: .command)
-
-                Divider()
-
-                Button("刷新") {
-                    Task { await refreshActiveWorkspace() }
-                }
-                .keyboardShortcut("r", modifiers: .command)
             }
         }
     }
+}
 
-    private func openWorkspaceDialog() {
+// MARK: - 菜单操作
+
+@MainActor
+enum WorkspaceActions {
+    static func openDialog(workspaceVM: WorkspaceViewModel) {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -74,17 +86,17 @@ struct PylorsAssetMgrApp: App {
         panel.prompt = "打开"
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        Task {
+        Task { @MainActor in
             await workspaceVM.openWorkspace(path: url.path)
         }
     }
 
-    private func closeActiveWorkspace() async {
+    static func closeActive(workspaceVM: WorkspaceViewModel) async {
         guard workspaceVM.activeIndex >= 0 else { return }
         await workspaceVM.closeWorkspace(at: workspaceVM.activeIndex)
     }
 
-    private func refreshActiveWorkspace() async {
+    static func refresh(workspaceVM: WorkspaceViewModel) async {
         await workspaceVM.activeViewModel?.refresh()
     }
 }

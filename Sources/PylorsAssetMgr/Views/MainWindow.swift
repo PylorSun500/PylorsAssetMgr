@@ -2,51 +2,43 @@ import SwiftUI
 
 struct MainWindow: View {
     @Environment(WorkspaceViewModel.self) private var workspaceVM
-    @State private var sidebarVisible = true
 
     var body: some View {
         VStack(spacing: 0) {
             // 标签栏
             TabBar()
 
-            // 过滤栏
-            if workspaceVM.activeViewModel != nil {
-                FilterBarView()
-            }
-
-            // 主内容区
-            if sidebarVisible {
-                HSplitView {
+            if let _ = workspaceVM.activeViewModel {
+                NavigationSplitView {
+                    // 侧边栏 — 目录树
                     DirTreeView()
                         .frame(minWidth: 160, idealWidth: 200, maxWidth: 320)
+                        .navigationSplitViewColumnWidth(min: 160, ideal: 200, max: 320)
+                } detail: {
+                    // 右侧内容区
+                    VStack(spacing: 0) {
+                        AssetListView(viewModel: workspaceVM.activeViewModel!)
+                            .layoutPriority(1)
 
-                    assetTableArea
+                        // 筛选栏 — 在文件列表底部
+                        FilterBarView()
+                    }
                 }
+                .navigationSplitViewStyle(.balanced)
             } else {
-                assetTableArea
+                emptyStateView
             }
 
             // 状态栏
-            if workspaceVM.activeViewModel != nil {
-                StatusBarView()
-            }
+            StatusBarView()
         }
         .onReceive(NotificationCenter.default.publisher(for: .toggleSidebar)) { _ in
-            sidebarVisible.toggle()
-        }
-    }
-
-    @ViewBuilder
-    private var assetTableArea: some View {
-        if let vm = workspaceVM.activeViewModel {
-            AssetListView(viewModel: vm)
-        } else {
-            emptyStateView
+            // NavigationSplitView 自动处理 sidebar toggle
         }
     }
 
     private var emptyStateView: some View {
-        VStack {
+        VStack(spacing: 16) {
             Image(systemName: "folder.badge.plus")
                 .font(.system(size: 48))
                 .foregroundStyle(.secondary)

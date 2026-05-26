@@ -25,6 +25,18 @@ struct AssetListView: NSViewRepresentable {
         tableView.doubleAction = #selector(Coordinator.tableViewDoubleClick(_:))
         tableView.menu = context.coordinator.buildMenu()
 
+        // 自定义表头
+        let headerView = CustomHeaderView()
+        headerView.onAddTag = { [weak tableView] in
+            guard let tv = tableView, let coord = tv.delegate as? Coordinator else { return }
+            coord.showAddTagPopover(relativeTo: headerView.addButton)
+        }
+        headerView.onHeaderMenu = { [weak tableView] col, key in
+            guard let tv = tableView, let coord = tv.delegate as? Coordinator else { return nil }
+            return coord.headerMenu(for: col, key: key)
+        }
+        tableView.headerView = headerView
+
         scrollView.documentView = tableView
         context.coordinator.tableView = tableView
         context.coordinator.viewModel = viewModel
@@ -36,17 +48,13 @@ struct AssetListView: NSViewRepresentable {
         guard let tableView = scrollView.documentView as? NSTableView else { return }
         context.coordinator.viewModel = viewModel
 
-        // 仅当列配置变化时重建列
         let currentKeys = tableView.tableColumns.map { $0.identifier.rawValue }
         let newKeys = viewModel.getVisibleColumnKeys()
         if currentKeys != newKeys {
             rebuildColumns(tableView: tableView, keys: newKeys, coordinator: context.coordinator)
         }
 
-        // 更新列宽
         updateColumnWidths(tableView: tableView, context: context)
-
-        // 更新排序指示器
         updateSortIndicator(tableView: tableView)
 
         tableView.reloadData()
@@ -60,7 +68,6 @@ struct AssetListView: NSViewRepresentable {
 
     private func rebuildColumns(tableView: NSTableView, keys: [String],
                                  coordinator: Coordinator) {
-        // 移除旧列
         tableView.tableColumns.forEach { tableView.removeTableColumn($0) }
 
         let defaultWidths: [String: CGFloat] = [
@@ -87,7 +94,6 @@ struct AssetListView: NSViewRepresentable {
             widths[key] = col.width
         }
         context.coordinator.savedColumnWidths = widths
-        // 持久化通知
         context.coordinator.invokeWidthChange()
     }
 
@@ -158,7 +164,6 @@ struct AssetListView: NSViewRepresentable {
             let value = assets[row].getTag(key) ?? ""
             textField.stringValue = value
 
-            // 目录着色
             if assets[row].isDir && key == "name" {
                 textField.textColor = .systemBlue
             } else {
@@ -176,11 +181,9 @@ struct AssetListView: NSViewRepresentable {
             tableView.reloadData()
         }
 
-        func tableViewSelectionDidChange(_ notification: Notification) {
-            // 选择变化由右键菜单处理
-        }
+        func tableViewSelectionDidChange(_ notification: Notification) {}
 
-        // MARK: - 双击编辑
+        // MARK: - 双击
 
         @objc func tableViewDoubleClick(_ sender: NSTableView) {
             let row = sender.clickedRow
@@ -192,21 +195,16 @@ struct AssetListView: NSViewRepresentable {
             let key = visibleKeys[col]
             let asset = assets[row]
 
+            // 系统标签 → 打开文件
             if Constants.systemTagKeys.contains(key) {
-                // 系统标签不可编辑
-                let alert = NSAlert()
-                alert.messageText = "系统标签"
-                alert.informativeText = "「\(Constants.systemTagLabels[key] ?? key)」是系统标签，不可编辑。"
-                alert.alertStyle = .informational
-                alert.runModal()
+                let url = vm.resolvePath(for: asset)
+                NSWorkspace.shared.open(url)
                 return
             }
 
-            // 弹出标签编辑器
+            // 用户标签 → 弹出标签编辑器
             let suggestions = vm.getSuggestions(for: key)
             let current = asset.userTags[key] ?? ""
-
-            guard let window = sender.window else { return }
 
             let popover = NSPopover()
             popover.behavior = .transient
@@ -229,10 +227,129 @@ struct AssetListView: NSViewRepresentable {
                 )
             )
 
-            // 定位 popover 到点击的单元格
             if let cellView = sender.view(atColumn: col, row: row, makeIfNecessary: false) {
                 popover.show(relativeTo: cellView.bounds, of: cellView, preferredEdge: .maxY)
             }
+        }
+
+        // MARK: - 列标题右键菜单
+
+        func headerMenu(for column: Int, key: String) -> NSMenu? {
+            let menu = NSMenu()
+
+            let hideItem = NSMenuItem(
+                title: "隐藏「\(Constants.systemTagLabels[key] ?? key)」",
+                action: #selector(hideColumn(_:)), keyEquivalent: "")
+            hideItem.target = self
+            hideItem.representedObject = key
+            menu.addItem(hideItem)
+
+            menu.addItem(.separator())
+
+            let addTagItem = NSMenuItem(
+                title: "添加用户标签列...",
+                action: #selector(showAddTagSheet(_:)), keyEquivalent: "")
+            addTagItem.target = self
+            menu.addItem(addTagItem)
+
+            let quickAddItem = NSMenuItem(
+                title: "快速添加常用标签", action: nil, keyEquivalent: "")
+            let quickMenu = NSMenu()
+            for label in Constants.commonTagQuickAdd {
+                let item = NSMenuItem(
+                    title: label, action: #selector(quickAddColumn(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = label
+                quickMenu.addItem(item)
+            }
+            quickAddItem.submenu = quickMenu
+            menu.addItem(quickAddItem)
+
+            menu.addItem(.separator())
+
+            let pickerItem = NSMenuItem(
+                title: "选择可见列...", action: #selector(showColumnPicker(_:)), keyEquivalent: "")
+            pickerItem.target = self
+            menu.addItem(pickerItem)
+
+            return menu
+        }
+
+        @objc private func hideColumn(_ sender: NSMenuItem) {
+            guard let key = sender.representedObject as? String,
+                  let vm = viewModel else { return }
+            var current = vm.getVisibleColumnKeys()
+            current.removeAll { $0 == key }
+            vm.setVisibleColumns(current)
+        }
+
+        @objc private func showAddTagSheet(_ sender: NSMenuItem) {
+            guard let vm = viewModel, let tv = tableView,
+                  let window = tv.window else { return }
+
+            let sheetWindow = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 320, height: 180),
+                styleMask: [.titled, .closable],
+                backing: .buffered, defer: false)
+            sheetWindow.title = "添加用户标签"
+
+            let hostingView = NSHostingView(
+                rootView: QuickAddTagView(
+                    existingKeys: vm.availableColumns.map(\.key),
+                    onAdd: { key in
+                        var current = vm.getVisibleColumnKeys()
+                        if !current.contains(key) {
+                            current.append(key)
+                            vm.setVisibleColumns(current)
+                        }
+                        window.endSheet(sheetWindow)
+                    },
+                    onCancel: {
+                        window.endSheet(sheetWindow)
+                    }
+                )
+            )
+            hostingView.frame.size = NSSize(width: 320, height: 180)
+            sheetWindow.contentView = hostingView
+
+            window.beginSheet(sheetWindow)
+        }
+
+        @objc private func quickAddColumn(_ sender: NSMenuItem) {
+            guard let key = sender.representedObject as? String,
+                  let vm = viewModel else { return }
+            var current = vm.getVisibleColumnKeys()
+            if !current.contains(key) {
+                current.append(key)
+                vm.setVisibleColumns(current)
+            }
+        }
+
+        @objc private func showColumnPicker(_ sender: NSMenuItem) {
+            NotificationCenter.default.post(name: .showColumnPicker, object: nil)
+        }
+
+        func showAddTagPopover(relativeTo view: NSView?) {
+            guard let tv = tableView, let vm = viewModel,
+                  let anchor = view ?? tv.headerView else { return }
+
+            let popover = NSPopover()
+            popover.behavior = .transient
+            popover.contentViewController = NSHostingController(
+                rootView: QuickAddTagView(
+                    existingKeys: vm.availableColumns.map(\.key),
+                    onAdd: { key in
+                        var current = vm.getVisibleColumnKeys()
+                        if !current.contains(key) {
+                            current.append(key)
+                            vm.setVisibleColumns(current)
+                        }
+                        popover.close()
+                    },
+                    onCancel: { popover.close() }
+                )
+            )
+            popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
         }
 
         // MARK: - 右键菜单
@@ -243,16 +360,7 @@ struct AssetListView: NSViewRepresentable {
             return menu
         }
 
-        override func responds(to aSelector: Selector!) -> Bool {
-            if aSelector == #selector(openSelectedAssets) ||
-               aSelector == #selector(copySelectedPaths) ||
-               aSelector == #selector(quickTag(_:)) ||
-               aSelector == #selector(batchEditTags) ||
-               aSelector == #selector(deleteTag(_:)) {
-                return true
-            }
-            return super.responds(to: aSelector)
-        }
+        // MARK: - 文件操作
 
         @objc func openSelectedAssets() {
             guard let vm = viewModel else { return }
@@ -260,6 +368,20 @@ struct AssetListView: NSViewRepresentable {
                 let url = vm.resolvePath(for: assets[idx])
                 NSWorkspace.shared.open(url)
             }
+        }
+
+        @objc func showSelectedInFinder() {
+            guard let vm = viewModel else { return }
+            let urls = selectedRowIndices().map { vm.resolvePath(for: assets[$0]) }
+            NSWorkspace.shared.activateFileViewerSelecting(urls)
+        }
+
+        @objc func copySelectedFiles() {
+            guard let vm = viewModel else { return }
+            let urls = selectedRowIndices().map { vm.resolvePath(for: assets[$0]) }
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.writeObjects(urls as [NSURL])
         }
 
         @objc func copySelectedPaths() {
@@ -272,6 +394,85 @@ struct AssetListView: NSViewRepresentable {
                                            forType: .string)
         }
 
+        @objc func deleteSelectedAssets() {
+            guard let vm = viewModel else { return }
+            let indices = selectedRowIndices()
+            let selected = indices.map { assets[$0] }
+            guard !selected.isEmpty else { return }
+
+            let alert = NSAlert()
+            if selected.count == 1 {
+                alert.messageText = "删除文件"
+                alert.informativeText = "确定要将「\(selected[0].name)」移到废纸篓吗？"
+            } else {
+                alert.messageText = "删除文件"
+                alert.informativeText = "确定要将 \(selected.count) 个文件移到废纸篓吗？"
+            }
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "移到废纸篓")
+            alert.addButton(withTitle: "取消")
+
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+            let urls = selected.map { vm.resolvePath(for: $0) }
+            for url in urls {
+                do {
+                    try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+                } catch {
+                    NSWorkspace.shared.recycle([url])
+                }
+            }
+            Task {
+                await vm.refresh()
+            }
+        }
+
+        @objc func renameSelectedAsset() {
+            guard let vm = viewModel, let tv = tableView else { return }
+            let row = tv.clickedRow
+            guard row >= 0, row < assets.count else { return }
+            let asset = assets[row]
+            let url = vm.resolvePath(for: asset)
+
+            let alert = NSAlert()
+            alert.messageText = "重命名"
+            alert.informativeText = "输入新名称："
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "确定")
+            alert.addButton(withTitle: "取消")
+
+            let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+            input.stringValue = asset.name
+            alert.accessoryView = input
+
+            guard alert.runModal() == .alertFirstButtonReturn,
+                  !input.stringValue.isEmpty,
+                  input.stringValue != asset.name else { return }
+
+            let newURL = url.deletingLastPathComponent()
+                .appendingPathComponent(input.stringValue)
+            do {
+                try FileManager.default.moveItem(at: url, to: newURL)
+                Task { await vm.refresh() }
+            } catch {
+                let errAlert = NSAlert(error: error)
+                errAlert.runModal()
+            }
+        }
+
+        @objc func openWithApp(_ sender: NSMenuItem) {
+            guard let vm = viewModel,
+                  let appURL = sender.representedObject as? URL else { return }
+            let indices = selectedRowIndices()
+            if indices.count == 1 {
+                let url = vm.resolvePath(for: assets[indices.first!])
+                let config = NSWorkspace.OpenConfiguration()
+                NSWorkspace.shared.open([url], withApplicationAt: appURL, configuration: config)
+            }
+        }
+
+        // MARK: - 标签操作
+
         @objc func quickTag(_ sender: NSMenuItem) {
             guard let vm = viewModel,
                   let tagInfo = sender.representedObject as? (String, String) else { return }
@@ -281,8 +482,41 @@ struct AssetListView: NSViewRepresentable {
             tableView?.reloadData()
         }
 
+        @objc func addTagToSelected(_ sender: NSMenuItem) {
+            guard let vm = viewModel,
+                  let key = sender.representedObject as? String else { return }
+            let indices = selectedRowIndices()
+            let selected = indices.map { assets[$0] }
+
+            // 如果有子菜单提供 value，使用它；否则弹出编辑器
+            if let value = (sender as? TagValueMenuItem)?.tagValue {
+                vm.batchUpdateTags(assets: selected, key: key, value: value)
+                tableView?.reloadData()
+            } else {
+                showBatchTagPopover(key: key, assets: selected)
+            }
+        }
+
+        private func showBatchTagPopover(key: String, assets: [Asset]) {
+            guard let tv = tableView, let vm = viewModel else { return }
+            let popover = NSPopover()
+            popover.behavior = .transient
+            popover.contentViewController = NSHostingController(
+                rootView: BatchEditSheet(
+                    assetCount: assets.count,
+                    onConfirm: { k, value in
+                        vm.batchUpdateTags(assets: assets, key: k, value: value)
+                        self.tableView?.reloadData()
+                        popover.close()
+                    },
+                    onCancel: { popover.close() }
+                )
+            )
+            popover.show(relativeTo: tv.bounds, of: tv, preferredEdge: .maxY)
+        }
+
         @objc func batchEditTags() {
-            guard let vm = viewModel, let window = tableView?.window else { return }
+            guard let vm = viewModel, let tv = tableView else { return }
             let indices = selectedRowIndices()
             let selected = indices.map { assets[$0] }
 
@@ -299,7 +533,7 @@ struct AssetListView: NSViewRepresentable {
                     onCancel: { popover.close() }
                 )
             )
-            popover.show(relativeTo: tableView!.bounds, of: tableView!, preferredEdge: .maxY)
+            popover.show(relativeTo: tv.bounds, of: tv, preferredEdge: .maxY)
         }
 
         @objc func deleteTag(_ sender: NSMenuItem) {
@@ -317,7 +551,7 @@ struct AssetListView: NSViewRepresentable {
             tableView?.selectedRowIndexes ?? IndexSet()
         }
 
-        // MARK: - 列宽变更
+        // MARK: - 列宽
 
         func invokeWidthChange() {
             guard let vm = viewModel else { return }
@@ -333,59 +567,253 @@ struct AssetListView: NSViewRepresentable {
     }
 }
 
-// MARK: - NSMenuDelegate
+// MARK: - NSMenuDelegate (右键菜单构建)
 
 extension AssetListView.Coordinator: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
 
         let indices = selectedRowIndices()
-        if indices.isEmpty { return }
+        guard !indices.isEmpty, let vm = viewModel else { return }
 
+        // ---- 文件操作 ----
         if indices.count == 1 {
-            menu.addItem(NSMenuItem(title: "打开文件",
+            let asset = assets[indices.first!]
+            menu.addItem(NSMenuItem(title: "打开「\(asset.name)」",
                                     action: #selector(openSelectedAssets),
+                                    keyEquivalent: ""))
+
+            // "打开方式" 子菜单
+            let openWithItem = NSMenuItem(title: "打开方式", action: nil, keyEquivalent: "")
+            let openWithMenu = NSMenu()
+            let url = vm.resolvePath(for: asset)
+            let apps = NSWorkspace.shared.urlsForApplications(toOpen: url)
+            if apps.isEmpty {
+                openWithMenu.addItem(
+                    NSMenuItem(title: "（无可用应用）", action: nil, keyEquivalent: ""))
+            } else {
+                for appURL in apps.prefix(15) {
+                    let appName = appURL.deletingPathExtension().lastPathComponent
+                    let item = NSMenuItem(
+                        title: appName, action: #selector(openWithApp(_:)), keyEquivalent: "")
+                    item.target = self
+                    item.representedObject = appURL
+                    item.image = NSWorkspace.shared.icon(forFile: appURL.path)
+                    openWithMenu.addItem(item)
+                }
+                openWithMenu.addItem(.separator())
+                let browseItem = NSMenuItem(
+                    title: "其他...", action: #selector(openSelectedAssets), keyEquivalent: "")
+                browseItem.target = self
+                openWithMenu.addItem(browseItem)
+            }
+            openWithItem.submenu = openWithMenu
+            menu.addItem(openWithItem)
+
+            menu.addItem(NSMenuItem(title: "在访达中显示",
+                                    action: #selector(showSelectedInFinder),
+                                    keyEquivalent: ""))
+
+            menu.addItem(.separator())
+
+            menu.addItem(NSMenuItem(title: "复制",
+                                    action: #selector(copySelectedFiles),
                                     keyEquivalent: ""))
             menu.addItem(NSMenuItem(title: "复制路径",
                                     action: #selector(copySelectedPaths),
                                     keyEquivalent: ""))
+
+            menu.addItem(.separator())
+
+            menu.addItem(NSMenuItem(title: "重命名...",
+                                    action: #selector(renameSelectedAsset),
+                                    keyEquivalent: ""))
+            menu.addItem(NSMenuItem(title: "移到废纸篓",
+                                    action: #selector(deleteSelectedAssets),
+                                    keyEquivalent: ""))
         } else {
-            menu.addItem(NSMenuItem(title: "已选 \(indices.count) 个资产",
+            menu.addItem(NSMenuItem(title: "已选 \(indices.count) 个文件",
                                     action: nil, keyEquivalent: ""))
+            menu.addItem(.separator())
+
+            menu.addItem(NSMenuItem(title: "在访达中显示",
+                                    action: #selector(showSelectedInFinder),
+                                    keyEquivalent: ""))
+            menu.addItem(NSMenuItem(title: "复制",
+                                    action: #selector(copySelectedFiles),
+                                    keyEquivalent: ""))
+            menu.addItem(NSMenuItem(title: "复制路径",
+                                    action: #selector(copySelectedPaths),
+                                    keyEquivalent: ""))
+
+            menu.addItem(.separator())
+
+            let deleteItem = NSMenuItem(title: "移到废纸篓 (\(indices.count) 个文件)",
+                                        action: #selector(deleteSelectedAssets),
+                                        keyEquivalent: "")
+            deleteItem.target = self
+            menu.addItem(deleteItem)
         }
 
+        // ---- 标签操作 ----
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "批量编辑标签...",
-                                action: #selector(batchEditTags),
-                                keyEquivalent: ""))
 
-        // importance 快捷标签
-        menu.addItem(.separator())
-        for (level, label) in [("high", "设为 importance:high"),
-                                ("medium", "设为 importance:medium"),
-                                ("low", "设为 importance:low")] {
-            let item = NSMenuItem(title: label,
+        // "添加标签" 子菜单
+        let userKeys = vm.availableColumns.filter { $0.source == .user }.map(\.key)
+        let currentUserTags = indices.count == 1
+            ? Set(assets[indices.first!].userTags.keys)
+            : Set<String>()
+
+        let addTagItem = NSMenuItem(title: "添加标签...", action: nil, keyEquivalent: "")
+        let addTagSub = NSMenu()
+
+        // 常用预设值
+        for (key, val, label) in Constants.tagQuickValues {
+            let item = NSMenuItem(title: "\(key): \(label)",
                                   action: #selector(quickTag(_:)),
                                   keyEquivalent: "")
-            item.representedObject = ("importance", level)
-            menu.addItem(item)
+            item.target = self
+            item.representedObject = (key, val)
+            addTagSub.addItem(item)
         }
 
-        // 已注册的用户标签键
-        if let vm = viewModel {
-            let keys = vm.availableColumns
-                .filter { $0.source == .user && $0.key != "importance" }
-                .map(\.key)
-            if !keys.isEmpty {
-                menu.addItem(.separator())
-                for k in keys.prefix(10) {
-                    let item = NSMenuItem(title: "删除标签: \(k)",
-                                          action: #selector(deleteTag(_:)),
-                                          keyEquivalent: "")
-                    item.representedObject = k
-                    menu.addItem(item)
-                }
+        addTagSub.addItem(.separator())
+
+        // 已有用户标签键
+        let availableUserKeys = userKeys.filter { !currentUserTags.contains($0) }
+        if !availableUserKeys.isEmpty {
+            for k in availableUserKeys.prefix(15) {
+                let item = NSMenuItem(title: k,
+                                      action: #selector(addTagToSelected(_:)),
+                                      keyEquivalent: "")
+                item.target = self
+                item.representedObject = k
+                addTagSub.addItem(item)
+            }
+        } else if indices.count == 1 {
+            addTagSub.addItem(
+                NSMenuItem(title: "（全部已设置）", action: nil, keyEquivalent: ""))
+        }
+        addTagItem.submenu = addTagSub
+        menu.addItem(addTagItem)
+
+        // "移除标签" 子菜单
+        if indices.count == 1 && !currentUserTags.isEmpty {
+            let removeTagItem = NSMenuItem(title: "移除标签", action: nil, keyEquivalent: "")
+            let removeTagSub = NSMenu()
+            for k in currentUserTags.sorted().prefix(15) {
+                let item = NSMenuItem(title: k,
+                                      action: #selector(deleteTag(_:)),
+                                      keyEquivalent: "")
+                item.target = self
+                item.representedObject = k
+                removeTagSub.addItem(item)
+            }
+            removeTagItem.submenu = removeTagSub
+            menu.addItem(removeTagItem)
+        }
+
+        let batchItem = NSMenuItem(title: "批量编辑标签...",
+                                    action: #selector(batchEditTags),
+                                    keyEquivalent: "")
+        batchItem.target = self
+        menu.addItem(batchItem)
+    }
+}
+
+// MARK: - 共享视图
+
+struct QuickAddTagView: View {
+    @State private var tagKey = ""
+    let existingKeys: [String]
+    let onAdd: (String) -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("添加用户标签列")
+                .font(.headline)
+            TextField("输入标签名称", text: $tagKey)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 200)
+                .onSubmit { commit() }
+            if !tagKey.isEmpty && existingKeys.contains(tagKey) {
+                Text("该标签已存在，添加后将设为可见")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            HStack {
+                Spacer()
+                Button("取消", action: onCancel)
+                Button("添加") { commit() }
+                    .keyboardShortcut(.return)
+                    .disabled(tagKey.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
+        .padding()
+    }
+
+    func commit() {
+        let trimmed = tagKey.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        onAdd(trimmed)
+    }
+}
+
+// MARK: - TagValueMenuItem
+
+private final class TagValueMenuItem: NSMenuItem {
+    var tagValue: String?
+}
+
+// MARK: - CustomHeaderView
+
+final class CustomHeaderView: NSTableHeaderView {
+    var onAddTag: (() -> Void)?
+    var onHeaderMenu: ((Int, String) -> NSMenu?)?
+
+    let addButton: NSButton = {
+        let btn = NSButton()
+        btn.title = ""
+        btn.image = NSImage(
+            systemSymbolName: "plus",
+            accessibilityDescription: "添加列")
+        btn.bezelStyle = .smallSquare
+        btn.isBordered = false
+        btn.toolTip = "添加用户标签列"
+        return btn
+    }()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        addSubview(addButton)
+        addButton.target = self
+        addButton.action = #selector(addTagAction)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not implemented") }
+
+    override func layout() {
+        super.layout()
+        let btnSize: CGFloat = 22
+        addButton.frame = NSRect(
+            x: bounds.width - btnSize - 4,
+            y: (bounds.height - btnSize) / 2,
+            width: btnSize,
+            height: btnSize
+        )
+    }
+
+    @objc private func addTagAction() {
+        onAddTag?()
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard let tableView = tableView else { return nil }
+        let point = convert(event.locationInWindow, from: nil)
+        let column = self.column(at: point)
+        guard column >= 0, column < tableView.tableColumns.count else { return nil }
+        let key = tableView.tableColumns[column].identifier.rawValue
+        return onHeaderMenu?(column, key)
     }
 }
