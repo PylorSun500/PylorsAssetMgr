@@ -252,19 +252,6 @@ struct AssetListView: NSViewRepresentable {
             addTagItem.target = self
             menu.addItem(addTagItem)
 
-            let quickAddItem = NSMenuItem(
-                title: "快速添加常用标签", action: nil, keyEquivalent: "")
-            let quickMenu = NSMenu()
-            for label in Constants.commonTagQuickAdd {
-                let item = NSMenuItem(
-                    title: label, action: #selector(quickAddColumn(_:)), keyEquivalent: "")
-                item.target = self
-                item.representedObject = label
-                quickMenu.addItem(item)
-            }
-            quickAddItem.submenu = quickMenu
-            menu.addItem(quickAddItem)
-
             menu.addItem(.separator())
 
             let pickerItem = NSMenuItem(
@@ -313,16 +300,6 @@ struct AssetListView: NSViewRepresentable {
             sheetWindow.contentView = hostingView
 
             window.beginSheet(sheetWindow)
-        }
-
-        @objc private func quickAddColumn(_ sender: NSMenuItem) {
-            guard let key = sender.representedObject as? String,
-                  let vm = viewModel else { return }
-            var current = vm.getVisibleColumnKeys()
-            if !current.contains(key) {
-                current.append(key)
-                vm.setVisibleColumns(current)
-            }
         }
 
         @objc private func showColumnPicker(_ sender: NSMenuItem) {
@@ -473,28 +450,12 @@ struct AssetListView: NSViewRepresentable {
 
         // MARK: - 标签操作
 
-        @objc func quickTag(_ sender: NSMenuItem) {
-            guard let vm = viewModel,
-                  let tagInfo = sender.representedObject as? (String, String) else { return }
-            let indices = selectedRowIndices()
-            let selected = indices.map { assets[$0] }
-            vm.batchUpdateTags(assets: selected, key: tagInfo.0, value: tagInfo.1)
-            tableView?.reloadData()
-        }
-
         @objc func addTagToSelected(_ sender: NSMenuItem) {
             guard let vm = viewModel,
                   let key = sender.representedObject as? String else { return }
             let indices = selectedRowIndices()
             let selected = indices.map { assets[$0] }
-
-            // 如果有子菜单提供 value，使用它；否则弹出编辑器
-            if let value = (sender as? TagValueMenuItem)?.tagValue {
-                vm.batchUpdateTags(assets: selected, key: key, value: value)
-                tableView?.reloadData()
-            } else {
-                showBatchTagPopover(key: key, assets: selected)
-            }
+            showBatchTagPopover(key: key, assets: selected)
         }
 
         private func showBatchTagPopover(key: String, assets: [Asset]) {
@@ -667,18 +628,6 @@ extension AssetListView.Coordinator: NSMenuDelegate {
         let addTagItem = NSMenuItem(title: "添加标签...", action: nil, keyEquivalent: "")
         let addTagSub = NSMenu()
 
-        // 常用预设值
-        for (key, val, label) in Constants.tagQuickValues {
-            let item = NSMenuItem(title: "\(key): \(label)",
-                                  action: #selector(quickTag(_:)),
-                                  keyEquivalent: "")
-            item.target = self
-            item.representedObject = (key, val)
-            addTagSub.addItem(item)
-        }
-
-        addTagSub.addItem(.separator())
-
         // 已有用户标签键
         let availableUserKeys = userKeys.filter { !currentUserTags.contains($0) }
         if !availableUserKeys.isEmpty {
@@ -758,12 +707,6 @@ struct QuickAddTagView: View {
         guard !trimmed.isEmpty else { return }
         onAdd(trimmed)
     }
-}
-
-// MARK: - TagValueMenuItem
-
-private final class TagValueMenuItem: NSMenuItem {
-    var tagValue: String?
 }
 
 // MARK: - CustomHeaderView
